@@ -94,7 +94,7 @@ class TraitAnalyzer:
                         "X-Title": "KiraAI"
                     },
                     json={
-                        "model": "openai/o1-mini",
+                        "model": "openai/gpt-4o-mini",
                         "messages": [{"role": "user", "content": prompt}]
                     }
                 )
@@ -140,43 +140,30 @@ async def update_traits_from_entry(user_id: ObjectId, entry_content: str):
         "neuroticism": 5.0
     })
     
-    # Get recent entries for trend analysis (university-level algorithm)
+    # Get recent entries for context (last 5 entries)
     recent_entries = []
     cursor = db.journal_entries.find(
         {"user_id": user_id}
-    ).sort("created_at", -1).limit(10)
+    ).sort("created_at", -1).limit(5)
     
     async for entry in cursor:
         recent_entries.append(entry["content"])
     
-    # Combine recent entries for context
-    combined_text = entry_content
+    # Combine current entry with recent context
+    context_text = entry_content
     if len(recent_entries) > 1:
-        # Use a sliding window approach with weighted importance
-        weights = [0.4, 0.2, 0.15, 0.1, 0.05, 0.05, 0.025, 0.025]
-        weighted_text = entry_content  # Current entry has highest weight
-        for i, old_entry in enumerate(recent_entries[1:8]):  # Skip current entry
-            if i < len(weights) - 1:
-                # Add weighted influence of older entries
-                weighted_text += f" {old_entry[:100]}"  # Truncate older entries
+        # Add recent entries for context (current entry + 4 previous)
+        context_text += " Previous entries: " + " ".join(recent_entries[1:5])
     
-    # Get AI analysis
-    ai_adjustments = await analyzer.get_ai_personality_analysis(combined_text, current_traits)
+    # Get AI personality analysis with exponential moving average smoothing
+    ai_adjustments = await analyzer.get_ai_personality_analysis(context_text, current_traits)
     
-    # Get keyword-based analysis as backup/validation
-    keyword_adjustments = analyzer.analyze_text_sentiment(entry_content)
-    
-    # Combine both analyses with weighted average
+    # Apply exponential moving average for temporal smoothing (alpha = 0.3)
     final_adjustments = {}
     for trait in current_traits.keys():
-        ai_adj = ai_adjustments.get(trait, 0.0)
-        keyword_adj = keyword_adjustments.get(trait, 0.0)
-        
-        # Weight AI analysis higher but use keyword analysis as validation
-        combined_adj = (ai_adj * 0.7) + (keyword_adj * 0.3)
-        
-        # Apply temporal smoothing using exponential moving average
-        final_adjustments[trait] = combined_adj * 0.8  # Reduce volatility
+        adjustment = ai_adjustments.get(trait, 0.0)
+        # Exponential moving average smoothing to reduce volatility
+        final_adjustments[trait] = adjustment * 0.3
     
     # Update traits with bounds checking
     new_traits = {}

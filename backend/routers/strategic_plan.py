@@ -8,8 +8,7 @@ from datetime import datetime, timedelta
 import httpx
 import os
 from dotenv import load_dotenv
-from collections import defaultdict, Counter
-import heapq
+from collections import Counter
 import json
 
 load_dotenv()
@@ -30,63 +29,44 @@ class StrategicPlanGenerator:
         ]
     
     def analyze_journal_patterns(self, entries: List[Dict]) -> Dict:
-        """Analyze patterns in journal entries using data structures"""
+        """Analyze patterns in journal entries"""
         if not entries:
             return {"themes": [], "mood_trend": "neutral", "activity_patterns": {}}
         
-        # Use hash map for theme counting
+        # Count themes across all entries
         theme_counter = Counter()
         mood_scores = []
-        word_frequency = defaultdict(int)
+        word_frequency = Counter()
         
-        # Priority queue for most significant entries (by length and recency)
-        significant_entries = []
-        
-        for i, entry in enumerate(entries):
+        for entry in entries:
             content = entry.get("content", "")
-            words = content.lower().split()
+            words = [word.lower() for word in content.split() if len(word) > 3]
             
-            # Count word frequency
-            for word in words:
-                if len(word) > 3:  # Filter out small words
-                    word_frequency[word] += 1
+            # Count meaningful words
+            word_frequency.update(words)
             
-            # Extract themes using keyword analysis
+            # Extract and count themes
             themes = self.extract_themes(content)
             theme_counter.update(themes)
             
-            # Track mood if available
+            # Track mood ratings
             if entry.get("mood_rating"):
                 mood_scores.append(entry["mood_rating"])
-            
-            # Use heap to track most significant entries
-            significance_score = len(content) + (len(entries) - i) * 10  # Recency weight
-            if len(significant_entries) < 5:
-                heapq.heappush(significant_entries, (significance_score, content))
-            else:
-                heapq.heappushpop(significant_entries, (significance_score, content))
         
-        # Calculate mood trend
+        # Simple mood trend calculation
         mood_trend = "neutral"
-        if mood_scores:
-            avg_mood = sum(mood_scores) / len(mood_scores)
-            recent_mood = sum(mood_scores[-3:]) / len(mood_scores[-3:]) if len(mood_scores) >= 3 else avg_mood
-            if recent_mood > avg_mood + 0.5:
+        if len(mood_scores) >= 3:
+            recent_avg = sum(mood_scores[-3:]) / 3
+            overall_avg = sum(mood_scores) / len(mood_scores)
+            if recent_avg > overall_avg + 0.3:
                 mood_trend = "improving"
-            elif recent_mood < avg_mood - 0.5:
+            elif recent_avg < overall_avg - 0.3:
                 mood_trend = "declining"
         
-        # Get top themes
-        top_themes = [theme for theme, count in theme_counter.most_common(5)]
-        
-        # Get most frequent meaningful words
-        top_words = [word for word, freq in Counter(word_frequency).most_common(10)]
-        
         return {
-            "themes": top_themes,
+            "themes": [theme for theme, _ in theme_counter.most_common(5)],
             "mood_trend": mood_trend,
-            "top_words": top_words,
-            "significant_entries": [content for _, content in significant_entries],
+            "top_words": [word for word, _ in word_frequency.most_common(10)],
             "entry_count": len(entries)
         }
     
@@ -112,42 +92,120 @@ class StrategicPlanGenerator:
         
         return themes
     
+    def generate_trait_insights(self, traits, journal_analysis: Dict) -> Dict:
+        """Generate trait-specific insights and priorities for strategic planning"""
+        insights = {}
+        priority_areas = []
+        
+        # Analyze each trait with contextual insights
+        openness = traits.openness
+        if openness >= 7:
+            insights['openness'] = "High creativity and openness to new experiences"
+            priority_areas.append("• Leverage creative thinking for innovative solutions")
+        elif openness <= 3:
+            insights['openness'] = "Preference for familiar routines and proven methods"
+            priority_areas.append("• Introduce small, manageable changes gradually")
+        else:
+            insights['openness'] = "Balanced approach to new experiences and stability"
+        
+        conscientiousness = traits.conscientiousness
+        if conscientiousness >= 7:
+            insights['conscientiousness'] = "Strong self-discipline and goal orientation"
+            priority_areas.append("• Channel organization skills into long-term planning")
+        elif conscientiousness <= 3:
+            insights['conscientiousness'] = "Flexible approach, may benefit from structure"
+            priority_areas.append("• Build sustainable habits through simple systems")
+        else:
+            insights['conscientiousness'] = "Moderate self-discipline with room for growth"
+        
+        extraversion = traits.extraversion
+        if extraversion >= 7:
+            insights['extraversion'] = "Energized by social interaction and external stimulation"
+            priority_areas.append("• Use social connections as motivation and accountability")
+        elif extraversion <= 3:
+            insights['extraversion'] = "Thrives in quieter, more reflective environments"
+            priority_areas.append("• Design solitary practices that align with introspective nature")
+        else:
+            insights['extraversion'] = "Comfortable in both social and solitary settings"
+        
+        agreeableness = traits.agreeableness
+        if agreeableness >= 7:
+            insights['agreeableness'] = "Highly cooperative and considerate of others"
+            priority_areas.append("• Balance helping others with self-care practices")
+        elif agreeableness <= 3:
+            insights['agreeableness'] = "Direct and competitive, values personal achievement"
+            priority_areas.append("• Set clear boundaries while maintaining important relationships")
+        else:
+            insights['agreeableness'] = "Balanced between cooperation and assertiveness"
+        
+        neuroticism = traits.neuroticism
+        if neuroticism >= 7:
+            insights['neuroticism'] = "Higher emotional sensitivity, may experience stress intensely"
+            priority_areas.append("• Prioritize stress management and emotional regulation techniques")
+        elif neuroticism <= 3:
+            insights['neuroticism'] = "Emotionally stable and resilient under pressure"
+            priority_areas.append("• Use emotional stability to support others and take on challenges")
+        else:
+            insights['neuroticism'] = "Generally stable with occasional emotional fluctuations"
+        
+        # Determine engagement level based on entry frequency and conscientiousness
+        entry_count = journal_analysis.get('entry_count', 0)
+        if entry_count >= 15 and conscientiousness >= 6:
+            insights['engagement_level'] = "high commitment to self-reflection"
+        elif entry_count >= 8:
+            insights['engagement_level'] = "consistent journaling practice"
+        elif entry_count <= 3:
+            insights['engagement_level'] = "irregular reflection pattern - may benefit from habit building"
+        else:
+            insights['engagement_level'] = "moderate self-reflection engagement"
+        
+        insights['priority_areas'] = '\n'.join(priority_areas)
+        
+        return insights
+    
     async def generate_strategic_plan(self, user: User, journal_analysis: Dict) -> Dict:
         """Generate strategic plan using OpenAI API"""
         api_key = os.getenv("OPENROUTER_API_KEY")
         
-        # Create comprehensive prompt with user traits and journal analysis
+        # Create trait-driven insights for strategic planning
+        trait_insights = self.generate_trait_insights(user.traits, journal_analysis)
+        
+        # Create comprehensive prompt with deep trait integration
         prompt = f"""
-        You are Kira, a wise AI advisor inspired by Japanese Zen philosophy. Analyze this user's journal patterns and personality traits to create a strategic life plan.
+        You are Kira, a wise AI advisor inspired by Japanese Zen philosophy. Create a strategic life plan by deeply integrating this user's personality traits with their journal patterns.
 
-        USER PERSONALITY TRAITS (Big Five, 0-10 scale):
-        - Openness: {user.traits.openness}/10
-        - Conscientiousness: {user.traits.conscientiousness}/10  
-        - Extraversion: {user.traits.extraversion}/10
-        - Agreeableness: {user.traits.agreeableness}/10
-        - Neuroticism: {user.traits.neuroticism}/10
+        PERSONALITY PROFILE ANALYSIS:
+        - Openness: {user.traits.openness}/10 - {trait_insights['openness']}
+        - Conscientiousness: {user.traits.conscientiousness}/10 - {trait_insights['conscientiousness']}  
+        - Extraversion: {user.traits.extraversion}/10 - {trait_insights['extraversion']}
+        - Agreeableness: {user.traits.agreeableness}/10 - {trait_insights['agreeableness']}
+        - Neuroticism: {user.traits.neuroticism}/10 - {trait_insights['neuroticism']}
 
-        JOURNAL ANALYSIS:
-        - Recent themes: {', '.join(journal_analysis.get('themes', []))}
-        - Mood trend: {journal_analysis.get('mood_trend', 'neutral')}
-        - Key focus areas: {', '.join(journal_analysis.get('top_words', [])[:5])}
-        - Number of recent entries: {journal_analysis.get('entry_count', 0)}
+        JOURNAL PATTERNS & TRAIT CORRELATION:
+        - Dominant themes: {', '.join(journal_analysis.get('themes', []))} 
+        - Emotional trajectory: {journal_analysis.get('mood_trend', 'neutral')}
+        - Focus areas: {', '.join(journal_analysis.get('top_words', [])[:5])}
+        - Entry frequency: {journal_analysis.get('entry_count', 0)} entries (shows {trait_insights['engagement_level']})
 
-        Create a strategic plan with:
-        1. A thoughtful analysis of their current life patterns
-        2. 3-5 specific, actionable recommendations tailored to their personality
-        3. A Zen-inspired insight for mindful living
+        TRAIT-SPECIFIC GUIDANCE PRIORITIES:
+        {trait_insights['priority_areas']}
+
+        Create a strategic plan that directly leverages their personality strengths while addressing growth areas:
+        1. Analysis that connects journal themes to specific trait patterns
+        2. 4-5 recommendations that align with their personality profile (reference specific traits)
+        3. A Zen insight that speaks to their unique trait combination
 
         Respond in JSON format:
         {{
-            "title": "Strategic Plan Title",
-            "analysis": "Deep analysis of current patterns and traits...",
+            "title": "Strategic Plan Title (referencing key traits)",
+            "analysis": "Deep analysis connecting journal patterns to Big Five traits...",
             "recommendations": [
-                "Specific actionable recommendation 1",
-                "Specific actionable recommendation 2", 
-                "Specific actionable recommendation 3"
+                "Trait-specific actionable recommendation 1",
+                "Trait-specific actionable recommendation 2", 
+                "Trait-specific actionable recommendation 3",
+                "Trait-specific actionable recommendation 4"
             ],
-            "zen_insight": "A beautiful Zen-inspired insight about their journey..."
+            "zen_insight": "A Zen insight tailored to their personality profile..."
         }}
         """
         
@@ -161,7 +219,7 @@ class StrategicPlanGenerator:
                         "X-Title": "KiraAI"
                     },
                     json={
-                        "model": "openai/o1-mini",
+                        "model": "openai/gpt-4o-mini",
                         "messages": [{"role": "user", "content": prompt}]
                     }
                 )
@@ -184,31 +242,61 @@ class StrategicPlanGenerator:
             return self.create_fallback_plan(user, journal_analysis)
     
     def create_fallback_plan(self, user: User, analysis: Dict) -> Dict:
-        """Create a fallback strategic plan if AI generation fails"""
+        """Create a trait-driven fallback strategic plan if AI generation fails"""
         recommendations = []
+        trait_insights = self.generate_trait_insights(user.traits, analysis)
         
-        # Generate recommendations based on traits
+        # Generate trait-specific recommendations with higher weighting
         if user.traits.conscientiousness < 5:
-            recommendations.append("Create a simple daily routine to build structure and achieve your goals")
-        if user.traits.neuroticism > 6:
-            recommendations.append("Practice mindfulness meditation for 10 minutes daily to cultivate inner calm")
-        if user.traits.openness > 7:
-            recommendations.append("Explore a new creative hobby or learning opportunity this month")
-        if user.traits.extraversion < 4:
-            recommendations.append("Schedule one meaningful social connection each week")
+            if user.traits.openness > 6:
+                recommendations.append("Create a flexible daily routine that allows for creative exploration while building structure")
+            else:
+                recommendations.append("Start with one simple daily habit to gradually build organizational skills")
         
-        # Add theme-based recommendations
+        if user.traits.neuroticism > 6:
+            if user.traits.extraversion < 4:
+                recommendations.append("Practice solo mindfulness meditation to manage stress in your preferred quiet environment")
+            else:
+                recommendations.append("Join a group meditation or stress-management class to combine social energy with calm practices")
+        
+        if user.traits.openness > 7:
+            if user.traits.conscientiousness > 6:
+                recommendations.append("Channel your creativity into a structured project with clear milestones and deadlines")
+            else:
+                recommendations.append("Explore new creative outlets without pressure - let curiosity guide your journey")
+        
+        if user.traits.extraversion < 4 and user.traits.agreeableness > 6:
+            recommendations.append("Find meaningful one-on-one connections that honor your introverted nature while expressing your caring side")
+        
+        # Weight theme-based recommendations by relevant traits
         themes = analysis.get('themes', [])
         if 'work_stress' in themes:
-            recommendations.append("Set boundaries between work and personal time")
+            if user.traits.agreeableness > 6:
+                recommendations.append("Set gentle but firm boundaries at work - your caring nature shouldn't come at the cost of your wellbeing")
+            else:
+                recommendations.append("Leverage your natural assertiveness to establish clear work-life boundaries")
+        
         if 'health_wellness' in themes:
-            recommendations.append("Focus on consistent sleep schedule and gentle movement")
+            if user.traits.conscientiousness > 6:
+                recommendations.append("Create a detailed wellness plan with tracking to satisfy your organized nature")
+            else:
+                recommendations.append("Focus on intuitive wellness practices that feel natural rather than forced routines")
+        
+        # Create trait-aware analysis
+        dominant_traits = []
+        if user.traits.openness >= 7: dominant_traits.append("highly creative")
+        if user.traits.conscientiousness >= 7: dominant_traits.append("well-organized")
+        if user.traits.extraversion >= 7: dominant_traits.append("socially energized")
+        if user.traits.agreeableness >= 7: dominant_traits.append("deeply caring")
+        if user.traits.neuroticism <= 3: dominant_traits.append("emotionally stable")
+        
+        trait_description = ", ".join(dominant_traits) if dominant_traits else "balanced across personality dimensions"
         
         return {
-            "title": "Your Path Forward",
-            "analysis": f"Based on your recent reflections, you're navigating themes of {', '.join(themes[:3])} with a {analysis.get('mood_trend', 'stable')} emotional trajectory.",
+            "title": f"Strategic Path for a {trait_description.title()} Individual",
+            "analysis": f"Your personality profile shows you are {trait_description}. Combined with your recent focus on {', '.join(themes[:3])} and {analysis.get('mood_trend', 'stable')} emotional patterns, this suggests specific pathways for growth.",
             "recommendations": recommendations[:4],
-            "zen_insight": "Like bamboo that bends but does not break, find strength in flexibility and growth in your challenges."
+            "zen_insight": f"Like a tree that grows according to its nature - some reaching wide, others growing tall - honor your natural tendencies ({trait_description}) while gently stretching toward new light."
         }
 
 generator = StrategicPlanGenerator()
